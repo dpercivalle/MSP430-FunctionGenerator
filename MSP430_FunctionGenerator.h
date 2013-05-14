@@ -14,29 +14,29 @@
 //
 #include <msp430g2553.h>
 #include <stdint.h>
-#include "MSP430_LCD_nibble.c"
 //
 // Waveform enumeration
 //
-#define  SQUARE   1
-#define  SAWTOOTH 2
-#define  SIN      0
+#define SQUARE            1
+#define SIN               2
+#define SAWTOOTH          3
 #define SQUARE_SAW_HIGH   3000
 #define SQUARE_SAW_LOW    0
+#define SIN_FREQ          875
+#define SAW_FREQ          525
 //
 // Loop counter variables
 //
-static volatile int WAVE = SQUARE;
+static volatile unsigned int WAVE = SQUARE;
 static volatile unsigned int DAC_VALUE = SQUARE_SAW_LOW;
-static volatile unsigned int WAVE_DUTY = 1, WAVE_DUTY_SET = 1, SQUARE_NESTED_DELAY = 3;
-static volatile int square_count = 0, sin_count = 0;
+static volatile unsigned int WAVE_DUTY_HIGH = 20000, WAVE_DUTY_LOW = 20000;
+static volatile int square_count = 0, sin_count = 0, duty = 50, freq = 100;
 //
 // Waveform frequency/step variables
 //
-static volatile unsigned int TIMER_FREQ = 20000;
-static int SQ_FREQ[] = {20000, 10000, 6666, 5000, 4000};
-static int SIN_FREQ[] = {675};
-static volatile unsigned int SAW_STEP = 10;
+static volatile unsigned int TIMER_FREQ = 16000;
+static int SQ_FREQ[] = {16000, 8000, 5333, 4000, 3200};
+static volatile unsigned int SAW_STEP = 10, SIN_STEP = 1;
 //
 // Sin value look-up table
 //
