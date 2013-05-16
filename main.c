@@ -7,7 +7,6 @@
   *             Alex Lin
   **/
 #include "MSP430_FunctionGenerator.h"
-##include "MSP430_lcd_nibble.h"
 /////////////////////////////////
 //
 // main()
@@ -16,15 +15,17 @@
 void main(void){
    WDTCTL = WDTPW | WDTHOLD; // Stop watchdog timer
    // Calibrate Timer A
-   TACTL = TASSEL_2 + MC_2 + ID_3;     // Set timer to count SMCLK
+   TACTL = TASSEL_2 + MC_2 + ID_2;     // Set timer to count SMCLK
                                        // Set mode to count continuous to CCR0
                                        // Divide the 16MHz clock by 1 = 16Mhz
    CCTL0 = CCIE;                       // Enable timer interrupts
-   CCR0 = TIMER_FREQ;
+   CCR0 = 20000;
    //
-   // Configure ports for SPI on USIB
+   // Configure ports for 3-wire SPI on USCIB
    //
-   P1DIR |= BIT4;
+   P1DIR |= BIT4 | BIT0 | BIT6;
+   P1OUT &= ~BIT6;
+   P1OUT |= BIT0;
    P1SEL = BIT7 | BIT5;
    P1SEL2 = BIT7 | BIT5;
    P2IE = BIT0 | BIT1 | BIT2;
@@ -47,12 +48,15 @@ void main(void){
    //
    UCB0CTL1 &= ~UCSWRST;
    //
-   // Infinite loop, update DAC value
+   // Run DCO at 16Mhz
    //
    DCOCTL = 0;
    BCSCTL1 = CALBC1_16MHZ;
    DCOCTL = CALDCO_16MHZ;
-
+   //
+   // Enable interrupts, enter infinite loop
+   // that continuously updates DAC configuration
+   //
    _enable_interrupt();
    while (1) {
      setDACOutput(DAC_VALUE);
@@ -83,7 +87,7 @@ void setDACOutput (unsigned int level){
    UCB0TXBUF = (unsigned char)(DAC_word & 0x00FF);
                                                 // Transmit lower byte
    while (!(IFG2 & UCB0TXIFG));
-   __delay_cycles(20);                          // Wait for transfer to finish
+   __delay_cycles(16);                          // Wait for transfer to finish
                                                 // before driving /CS high and
                                                 // finishing communication
    P1OUT |= BIT4;
@@ -132,14 +136,32 @@ __interrupt void TimerAInterrupt(){
    //
    // Sin wave interrupt
    //
-   else if (WAVE == SIN){
-      static volatile int i = 0;
-      if (i > 179){
-         i = 0;
+    else if (WAVE == SIN){
+       static volatile int i = 0;
+       if (i+SIN_STEP > 179){
+          i = 0;
+       }
+       DAC_VALUE = SIN_LUT[(i+=SIN_STEP)];
+    }
+   //
+   // Exponential Pulse wave interrupt
+   //
+   else if (WAVE == EXP_PULSE){
+      if (((exp_index + 1) > 108  && !exp_toggle) || ((exp_index - 1) < 0 && exp_toggle)){
+         exp_toggle = !exp_toggle;
+         if (!exp_toggle){
+            exp_hold = exp_hold_time;
+         }
       }
-      DAC_VALUE = SIN_LUT[(i+=SIN_STEP)];
-
-      // SIN wave logic
+      if (!exp_toggle){
+         DAC_VALUE = EXP_LUT[exp_index++];         
+      }
+      else if (exp_hold > 0){
+         exp_hold --;
+      }
+      else{
+         DAC_VALUE = EXP_LUT[exp_index--];
+      }
    }
    CCR0 += TIMER_FREQ;
 }
@@ -156,12 +178,18 @@ __interrupt void Port2Interrupt(){
    //
    if (P2IFG & BIT2){
       DAC_VALUE = SQUARE_SAW_LOW;
-      WAVE = ((WAVE+1) % 3);
+      WAVE++;
+      if (WAVE == 5) {WAVE = SQUARE;}
       P2IFG &= ~BIT2;
       //
       // Sawtooth wave set, 100Hz
       //
       if (WAVE == SAWTOOTH){
+         DCOCTL = 0;
+         BCSCTL1 = CALBC1_16MHZ;
+         DCOCTL = CALDCO_16MHZ;
+         P1OUT &= ~(BIT0 | BIT6);
+         P1OUT |= (BIT0 | BIT6);
          TACTL = TASSEL_2 + MC_2;
          TIMER_FREQ = SAW_FREQ;
       }
@@ -169,20 +197,46 @@ __interrupt void Port2Interrupt(){
       // Square wave set, 100Hz, 50% duty
       //
       else if (WAVE == SQUARE){
-         square_count = 0;
+         DCOCTL = 0;
+         BCSCTL1 = CALBC1_16MHZ;
+         DCOCTL = CALDCO_16MHZ;
+         P1OUT &= ~(BIT0 | BIT6);
+         P1OUT |= BIT0;
          TIMER_FREQ = WAVE_DUTY_HIGH = WAVE_DUTY_LOW = 20000;
          duty = 50;
          freq = 100;
-         TACTL = TASSEL_2 + MC_2 + ID_3;
+         TACTL = TASSEL_2 + MC_2 + ID_2;
       }
       //
-      // Sin wave set, 100Hz
+      // Sin wave set, 100Hz, either the sinwave functionality or 
+      // the exponential pulse functionalit, including LUTs,
+      // has to be omitted in order for program to fit on MSP430
       //
       else if (WAVE == SIN){
          // SIN WAVE TIMER_FREQ SET
+         DCOCTL = 0;
+         BCSCTL1 = CALBC1_16MHZ;
+         DCOCTL = CALDCO_16MHZ;
+
+         P1OUT &= ~(BIT0 | BIT6);
+         P1OUT |= BIT6;
          TACTL = TASSEL_2 + MC_2;
          SIN_STEP = 1;
          TIMER_FREQ = SIN_FREQ;
+      }
+      //
+      //Exponential pulse set
+      //
+      else if (WAVE == EXP_PULSE){
+         DCOCTL = 0;
+         BCSCTL1 = CALBC1_16MHZ;
+         DCOCTL = CALDCO_16MHZ;
+         exp_toggle = 0;
+         exp_index = 0;
+         exp_hold = exp_hold_time = 50;
+         P1OUT &= ~(BIT0 | BIT6);
+         TACTL = TASSEL_2 + MC_2 + ID_3;
+         TIMER_FREQ = 60000;
       }
    }
    //
@@ -194,16 +248,30 @@ __interrupt void Port2Interrupt(){
       // Square wave frequency select
       //
       if (WAVE == SQUARE){
-         if (square_count == 4){
-            square_count = 0;
+         if (freq == 500){
             freq = 100;
          }
          else{
-            square_count++;
             freq += 100;
          }
          duty = 50;
-         TIMER_FREQ = SQ_FREQ[square_count];
+         if (freq == 100){
+            WAVE_DUTY_HIGH = WAVE_DUTY_LOW = 20000;
+         }
+         else if (freq == 200){
+            WAVE_DUTY_HIGH = WAVE_DUTY_LOW = 10000;
+         }
+         else if (freq == 300){
+            WAVE_DUTY_HIGH = 6667;
+            WAVE_DUTY_LOW = 6666;
+         }
+         else if (freq == 400){
+            WAVE_DUTY_HIGH = WAVE_DUTY_LOW = 5000;
+         }
+         else if (freq == 500){
+            WAVE_DUTY_HIGH = WAVE_DUTY_LOW = 4000;
+         }
+
       }
       //
       // Sawtooth wave frequency select
@@ -240,7 +308,7 @@ __interrupt void Port2Interrupt(){
       }
       else{
          // 100 Hz Frequency Duty
-         if (freq == 100){
+         if (freq == 100){            
             if (duty == 10){
                WAVE_DUTY_HIGH = 4000;
                WAVE_DUTY_LOW = 36000;
@@ -406,7 +474,7 @@ __interrupt void Port2Interrupt(){
                duty += 10;
             }
             else if (duty == 50){
-               WAVE_DUTY_HIGH = 50000;
+               WAVE_DUTY_HIGH = 5000;
                WAVE_DUTY_LOW = 5000;
                duty += 10;
             }
